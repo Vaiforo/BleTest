@@ -1,4 +1,4 @@
-// src/bleadvertiser.h — отправка BLE-рекламного пакета (AuroraOS, Qt 5 + QtDBus)
+// src/bleadvertiser.h — заголовок без изменений, но с комментариями по логированию
 #pragma once
 
 #include <QObject>
@@ -9,8 +9,11 @@ class QDBusInterface;
 
 /**
  * BleAdvertiser
- *  C++‑обёртка для регистрации рекламного пакета через BlueZ D‑Bus
+ *  Обёртка для регистрации BLE-рекламы в BlueZ (DBus).
  *  Используется на экране «Студент» (StudentPage.qml).
+ *
+ *  Теперь в реализации (bleadvertiser.cpp) добавлено подробное логирование
+ *  через qInfo/qDebug/qWarning — см. там.
  */
 class BleAdvertiser : public QObject
 {
@@ -18,19 +21,19 @@ class BleAdvertiser : public QObject
 public:
     explicit BleAdvertiser(QObject *parent = nullptr);
 
-    /** Запустить рекламу с указанным идентификатором. */
+    /** Запустить рекламу с указанным идентификатором студента. */
     Q_INVOKABLE void advertiseStudent(const QString &id);
 
 public slots:
-    /** Остановить рекламу досрочно (можно вызвать из QML). */
+    /** Досрочно остановить рекламу (можно вызвать из QML). */
     void stopAdvertising();
 
 private:
-    // Внутренние константы
-    static constexpr quint16 kCompanyId = 0xFFFF;  // Manufacturer ID
-    static const     int     kAdvMs     = 10 * 1000; // длительность рекламы (мс)
+    /* Внутренние константы */
+    static constexpr quint16 kCompanyId = 0xFFFF;   ///< Manufacturer ID
+    static const     int     kAdvMs     = 10 * 1000;///< длительность рекламы, мс
 
-    // Состояние текущей рекламы
-    QString                 m_currentPath;  // D‑Bus object path, напр. "/ble_adv"
-    QPointer<QDBusInterface> m_mgr;         // org.bluez.LEAdvertisingManager1
+    /* Текущее состояние */
+    QString                  m_currentPath;   ///< DBus object path ("/ble_adv")
+    QPointer<QDBusInterface> m_mgr;           ///< org.bluez.LEAdvertisingManager1
 };

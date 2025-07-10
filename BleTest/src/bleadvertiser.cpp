@@ -1,4 +1,4 @@
-// src/bleadvertiser.cpp
+// src/bleadvertiser.cpp — с расширенным логированием
 #include "bleadvertiser.h"
 
 #include <QtDBus/QDBusConnection>
@@ -9,23 +9,32 @@
 #include <QtDBus/QDBusPendingCallWatcher>
 #include <QtDBus/QDBusPendingReply>
 #include <QTimer>
+#include <QDateTime>
 #include <QDebug>
 
-BleAdvertiser::BleAdvertiser(QObject *parent) : QObject(parent) {}
+static inline QString ts()       // короткий тайм-стемп для лога
+{ return QDateTime::currentDateTime().toString("hh:mm:ss.zzz"); }
+
+BleAdvertiser::BleAdvertiser(QObject *parent) : QObject(parent)
+{
+    qInfo().noquote() << ts() << "[Advertiser] ctor OK";
+}
 
 /*───────────────────── публичный QML-вызываемый метод ───────────────────────*/
 void BleAdvertiser::advertiseStudent(const QString &id)
 {
+    qInfo().noquote() << ts() << "[Advertiser] advertiseStudent() called with id =" << id;
+
     if (id.isEmpty()) {
-        qWarning() << "BleAdvertiser: empty student ID";
+        qWarning().noquote() << ts() << "[Advertiser] empty student ID → abort";
         return;
     }
-    if (!m_currentPath.isEmpty()) {            // уже идёт реклама
-        qWarning() << "BleAdvertiser: advertising already active";
+    if (!m_currentPath.isEmpty()) {
+        qWarning().noquote() << ts() << "[Advertiser] advertising already active, ignore";
         return;
     }
 
-    /* 1. Формируем свойства рекламы */
+    /* 1. Формируем свойства рекламы ---------------------------------------- */
     QVariantMap props;
     props["Type"]         = QStringLiteral("broadcast");
     props["Discoverable"] = false;
@@ -35,27 +44,35 @@ void BleAdvertiser::advertiseStudent(const QString &id)
                  QVariant::fromValue(QByteArray(id.toLatin1())));
     props["ManufacturerData"] = QVariant::fromValue(mdata);
 
-    /* 2. Регистрируем «пустой» D-Bus-объект, BlueZ читает свойства через DBus.Properties */
+    qDebug().noquote() << ts() << "[Advertiser] Properties prepared:"
+                       << "CompanyId =" << kCompanyId
+                       << ", raw =" << id.toLatin1().toHex();
+
+    /* 2. Регистрируем объект с Properties interface ------------------------ */
     const QString path = "/ble_adv";
-    if (!QDBusConnection::systemBus().registerObject(path, this,
-            QDBusConnection::ExportAllProperties))
-    {
-        qWarning() << "BleAdvertiser: cannot register object path" << path;
+    const bool okObj = QDBusConnection::systemBus().registerObject(
+                path, this, QDBusConnection::ExportAllProperties);
+
+    if (!okObj) {
+        qWarning().noquote() << ts() << "[Advertiser] cannot register DBus object" << path;
         return;
     }
+    qDebug().noquote() << ts() << "[Advertiser] DBus object registered at" << path;
 
-    /* 3. Создаём интерфейс менеджера рекламы */
+    /* 3. Создаём интерфейс менеджера рекламы ------------------------------- */
     auto *mgr = new QDBusInterface("org.bluez", "/org/bluez/hci0",
                                    "org.bluez.LEAdvertisingManager1",
                                    QDBusConnection::systemBus(), this);
+
     if (!mgr->isValid()) {
-        qWarning() << "BleAdvertiser: BlueZ LEAdvertisingManager1 not found";
+        qWarning().noquote() << ts() << "[Advertiser] BlueZ LEAdvertisingManager1 not found";
         QDBusConnection::systemBus().unregisterObject(path);
         mgr->deleteLater();
         return;
     }
+    qDebug().noquote() << ts() << "[Advertiser] Got LEAdvertisingManager1";
 
-    /* 4. Асинхронно вызываем RegisterAdvertisement */
+    /* 4. Асинхронно вызываем RegisterAdvertisement ------------------------- */
     QDBusPendingCall pc =
         mgr->asyncCall(QStringLiteral("RegisterAdvertisement"),
                        QVariant::fromValue(QDBusObjectPath(path)),
@@ -64,11 +81,13 @@ void BleAdvertiser::advertiseStudent(const QString &id)
     auto *watcher = new QDBusPendingCallWatcher(pc, this);
     connect(watcher, &QDBusPendingCallWatcher::finished,
             this, [=] {
-        watcher->deleteLater();
         QDBusPendingReply<> reply = *watcher;
+        watcher->deleteLater();
+
         if (reply.isError()) {
-            qWarning() << "BleAdvertiser: RegisterAdvertisement error:"
-                       << reply.error().message();
+            qWarning().noquote() << ts()
+                << "[Advertiser] RegisterAdvertisement error:"
+                << reply.error().name() << reply.error().message();
             QDBusConnection::systemBus().unregisterObject(path);
             mgr->deleteLater();
             return;
@@ -77,7 +96,10 @@ void BleAdvertiser::advertiseStudent(const QString &id)
         /* Реклама успешно запущена */
         m_currentPath = path;
         m_mgr         = mgr;
-        qDebug() << "BleAdvertiser: advertising started for" << kAdvMs << "ms";
+
+        qInfo().noquote() << ts()
+                          << "[Advertiser] advertising STARTED, will stop in"
+                          << kAdvMs << "ms";
 
         /* авто-остановка через kAdvMs */
         QTimer::singleShot(kAdvMs, this, &BleAdvertiser::stopAdvertising);
@@ -87,15 +109,19 @@ void BleAdvertiser::advertiseStudent(const QString &id)
 /*──────────────────────────── публичный слот ────────────────────────────────*/
 void BleAdvertiser::stopAdvertising()
 {
-    if (m_currentPath.isEmpty() || !m_mgr)
-        return;                                     // нечего останавливать
+    if (m_currentPath.isEmpty() || !m_mgr) {
+        qDebug().noquote() << ts() << "[Advertiser] stopAdvertising(): nothing to stop";
+        return;
+    }
+
+    qDebug().noquote() << ts() << "[Advertiser] Sending UnregisterAdvertisement";
 
     m_mgr->call(QDBus::NoBlock, "UnregisterAdvertisement",
                 QVariant::fromValue(QDBusObjectPath(m_currentPath)));
 
     QDBusConnection::systemBus().unregisterObject(m_currentPath);
 
-    qDebug() << "BleAdvertiser: advertising stopped";
+    qInfo().noquote() << ts() << "[Advertiser] advertising STOPPED";
 
     m_mgr->deleteLater();
     m_mgr = nullptr;

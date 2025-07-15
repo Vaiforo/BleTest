@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+X-Nemo-Application-Type=silica-qt5
+Icon=ru.template.BleTest
+Exec=/usr/bin/ru.template.BleTest
+Name=Ble
+Name[ru]=Шаблон
+
+[X-Application]
+Permissions=Bluetooth;Location
+OrganizationName=ru.template
+ApplicationName=BleTest
+ExecDBus=/usr/bin/ru.template.BleTest
